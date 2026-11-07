@@ -5,7 +5,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Start the bridge in background if not already running
-if ! pgrep -f "python3 .*screenshot\.py" > /dev/null 2>&1; then
+# Match on this checkout's full script path (regex-escaped), not any "screenshot.py"
+BRIDGE_PATTERN="python3 $(printf '%s' "$SCRIPT_DIR/screenshot.py" | sed 's/[][\\.*^$+?(){}|\/]/\\&/g')"
+if ! pgrep -f -- "$BRIDGE_PATTERN" > /dev/null 2>&1; then
     echo "Starting screenshot bridge..." >&2
     python3 "$SCRIPT_DIR/screenshot.py" &
     disown

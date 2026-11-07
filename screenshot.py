@@ -8,7 +8,7 @@ import os
 
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method
-from dbus_next import BusType, DBusError
+from dbus_next import BusType, DBusError, RequestNameReply
 
 
 def debug(*msg):
@@ -16,6 +16,43 @@ def debug(*msg):
         print(*msg, file=sys.stderr, flush=True)
     except OSError:
         pass
+
+
+# Callers choose the output path over D-Bus, so restrict where we will write.
+ALLOWED_ROOTS = [
+    os.path.realpath(p)
+    for p in (
+        os.path.expanduser('~'),
+        '/tmp',
+        '/var/tmp',
+        os.environ.get('XDG_RUNTIME_DIR', ''),
+    )
+    if p
+]
+ALLOWED_EXTENSIONS = ('.png',)
+
+
+def safe_path(filename):
+    """Return a validated absolute path for grim to write to, or None."""
+    if not filename or not os.path.isabs(filename) or '\0' in filename:
+        return None
+    if not filename.lower().endswith(ALLOWED_EXTENSIONS):
+        return None
+    # Resolve symlinks and '..' before checking the location
+    real = os.path.realpath(filename)
+    if not any(real == r or real.startswith(r + os.sep) for r in ALLOWED_ROOTS):
+        return None
+    return real
+
+
+def grim_capture(args, filename):
+    path = safe_path(filename)
+    if path is None:
+        debug('Rejected unsafe filename:', repr(filename))
+        return [False, '']
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    subprocess.run(['grim', *args, path], check=True)
+    return [True, path]
 
 
 class ScreenshotInterface(ServiceInterface):
@@ -26,13 +63,10 @@ class ScreenshotInterface(ServiceInterface):
     def Screenshot(self, include_cursor: 'b', flash: 'b', filename: 's') -> 'bs':
         debug('Screenshot call:', filename)
         try:
-            os.makedirs(os.path.dirname(filename) or '.', exist_ok=True)
-            cmd = ['grim', filename]
-            if include_cursor:
-                cmd.insert(1, '-c')
-            subprocess.run(cmd, check=True)
-            debug('Screenshot saved:', filename)
-            return [True, filename]
+            result = grim_capture(['-c'] if include_cursor else [], filename)
+            if result[0]:
+                debug('Screenshot saved:', result[1])
+            return result
         except Exception as e:
             debug('Screenshot error:', e)
             return [False, '']
@@ -46,11 +80,10 @@ class ScreenshotInterface(ServiceInterface):
     def ScreenshotArea(self, x: 'i', y: 'i', width: 'i', height: 'i', flash: 'b', filename: 's') -> 'bs':
         debug('ScreenshotArea call:', x, y, width, height, filename)
         try:
-            os.makedirs(os.path.dirname(filename) or '.', exist_ok=True)
-            cmd = ['grim', '-g', f'{x},{y} {width}x{height}', filename]
-            subprocess.run(cmd, check=True)
-            debug('Area screenshot saved:', filename)
-            return [True, filename]
+            result = grim_capture(['-g', f'{x},{y} {width}x{height}'], filename)
+            if result[0]:
+                debug('Area screenshot saved:', result[1])
+            return result
         except Exception as e:
             debug('ScreenshotArea error:', e)
             return [False, '']
@@ -112,16 +145,24 @@ async def main():
     bus.export('/org/gnome/Mutter/IdleMonitor/Core', idle)
 
     try:
-        await bus.request_name('org.gnome.Shell.Screenshot')
-        debug('Claimed org.gnome.Shell.Screenshot')
+        reply = await bus.request_name('org.gnome.Shell.Screenshot')
     except DBusError as e:
         debug(f'Failed to claim Screenshot: {e}')
+        await idle.cleanup()
         return
+    if reply != RequestNameReply.PRIMARY_OWNER:
+        debug('org.gnome.Shell.Screenshot is already owned by another process; exiting')
+        await idle.cleanup()
+        return
+    debug('Claimed org.gnome.Shell.Screenshot')
 
     if idle.worker:
         try:
-            await bus.request_name('org.gnome.Mutter.IdleMonitor')
-            debug('Claimed org.gnome.Mutter.IdleMonitor')
+            reply = await bus.request_name('org.gnome.Mutter.IdleMonitor')
+            if reply == RequestNameReply.PRIMARY_OWNER:
+                debug('Claimed org.gnome.Mutter.IdleMonitor')
+            else:
+                debug('Warning: org.gnome.Mutter.IdleMonitor is owned by another process')
         except DBusError as e:
             debug(f'Warning: Failed to claim IdleMonitor: {e}')
 
