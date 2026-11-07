@@ -165,13 +165,6 @@ Two one-time steps are needed for the copy:
 This runs a modified copy of Upwork, which Upwork does not support; see the
 disclaimer below.
 
-## Running in a detached tmux session
-
-`upwork-tmux.sh [upwork args...]` runs the launcher in a detached tmux session
-named `upwork` (override with `UPWORK_TMUX_SESSION`). Attach with
-`tmux attach -t upwork`. If the launcher fails, the pane is kept so you can read
-the error; a clean exit removes the session.
-
 ## How It Works
 
 1. **screenshot.py** creates a D-Bus service that implements the `org.gnome.Shell.Screenshot` interface
