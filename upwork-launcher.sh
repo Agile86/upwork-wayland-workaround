@@ -53,6 +53,28 @@ fi
 export XDG_SESSION_TYPE=x11
 unset WAYLAND_DISPLAY
 
+# Prefer the patched private copy of Upwork (see patch-upwork.sh): stock Upwork
+# shows "Wayland not supported" after the first screenshot. The copy is rebuilt
+# automatically when the installed Upwork changes. Set UPWORK_NO_PATCH=1 to
+# always run the stock install instead.
+PATCHED_UPWORK="${UPWORK_PATCHED_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/upwork-wayland-workaround/Upwork}/upwork"
+if [ -z "$UPWORK_NO_PATCH" ]; then
+    if "$SCRIPT_DIR/patch-upwork.sh" --quiet && [ -x "$PATCHED_UPWORK" ]; then
+        SANDBOX_HELPER="$(dirname "$PATCHED_UPWORK")/chrome-sandbox"
+        # Chromium aborts at startup unless its setuid sandbox helper is
+        # root-owned with mode 4755. A user-made copy cannot set that itself.
+        if [ "$(stat -c '%U %a' "$SANDBOX_HELPER" 2>/dev/null)" = "root 4755" ]; then
+            exec "$PATCHED_UPWORK" "$@"
+        fi
+        warn "One-time setup needed: the patched copy's sandbox helper must be root-owned with mode 4755."
+        warn "  sudo chown root:root '$SANDBOX_HELPER' && sudo chmod 4755 '$SANDBOX_HELPER'"
+        warn "(Re-run this after the copy is rebuilt, e.g. when Upwork is updated.)"
+    else
+        warn "Could not prepare the patched Upwork copy."
+    fi
+    warn "Running the stock Upwork install instead (screenshots will stop after the first one)."
+fi
+
 # Find and launch Upwork
 if [ -x /opt/Upwork/upwork ]; then
     exec /opt/Upwork/upwork "$@"
