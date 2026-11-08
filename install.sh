@@ -9,7 +9,7 @@ DESKTOP_FILE="${DESKTOP_DIR}/upwork-fixed.desktop"
 LEGACY_DESKTOP_FILE="${DESKTOP_DIR}/upwork.desktop"
 
 # Ensure scripts are executable
-chmod +x "$SCRIPT_DIR/screenshot.py" "$SCRIPT_DIR/upwork-launcher.sh"
+chmod +x "$SCRIPT_DIR/screenshot.py" "$SCRIPT_DIR/upwork-launcher.sh" "$SCRIPT_DIR/upwork-show.sh" "$SCRIPT_DIR/upwork-toggle.py"
 
 # Find icon from system desktop file, fall back to theme name
 ICON="upwork"
@@ -66,3 +66,56 @@ if command -v update-desktop-database &>/dev/null; then
 fi
 
 echo "Desktop launcher installed: $DESKTOP_FILE"
+
+# --- GNOME shortcut: show/hide Upwork ----------------------------------------
+# Upwork's own hotkey cannot show the window under Wayland (see upwork-show.sh),
+# so register a compositor-level GNOME shortcut that runs upwork-toggle.py. Override with UPWORK_SHORTCUT
+# (GNOME accelerator syntax); set UPWORK_SHORTCUT= (empty) to skip.
+SHORTCUT="${UPWORK_SHORTCUT-<Primary><Alt>s}"
+MK_SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
+MK_ITEM_SCHEMA="$MK_SCHEMA.custom-keybinding"
+MK_BASE="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings"
+SHOW_CMD="$(printf '%q' "$SCRIPT_DIR/upwork-toggle.py")"
+
+if [ -z "$SHORTCUT" ]; then
+    echo "Skipping GNOME shortcut (UPWORK_SHORTCUT is empty)."
+elif ! command -v gsettings &>/dev/null || ! gsettings list-schemas 2>/dev/null | grep -qx "$MK_SCHEMA"; then
+    echo "gsettings/GNOME media-keys schema not found; not registering a shortcut."
+    echo "Bind $SCRIPT_DIR/upwork-toggle.py to a key manually."
+else
+    # Existing custom shortcut paths, e.g. .../custom0/
+    mapfile -t PATHS < <(gsettings get "$MK_SCHEMA" custom-keybindings | grep -o "$MK_BASE/[^']*")
+
+    OURS="" CONFLICT=""
+    for p in "${PATHS[@]}"; do
+        item="$MK_ITEM_SCHEMA:$p"
+        cmd=$(gsettings get "$item" command)
+        # Also matches the earlier "Show Upwork" entry (upwork-show.sh) and updates it
+        if [[ "$cmd" == *upwork-toggle.py* || "$cmd" == *upwork-show.sh* ]]; then
+            OURS="$p"
+        elif [ "$(gsettings get "$item" binding)" = "'$SHORTCUT'" ]; then
+            CONFLICT="$(gsettings get "$item" name)"
+        fi
+    done
+
+    if [ -n "$CONFLICT" ]; then
+        echo "Not registering $SHORTCUT: already used by another custom shortcut $CONFLICT."
+        echo "Re-run with UPWORK_SHORTCUT='<Primary><Alt>u' ./install.sh (or free that key)."
+    else
+        if [ -z "$OURS" ]; then
+            n=0
+            while printf '%s\n' "${PATHS[@]}" | grep -qx "$MK_BASE/custom$n/"; do n=$((n + 1)); done
+            OURS="$MK_BASE/custom$n/"
+            LIST="["
+            for p in "${PATHS[@]}" "$OURS"; do LIST+="'$p', "; done
+            gsettings set "$MK_SCHEMA" custom-keybindings "${LIST%, }]"
+        fi
+        item="$MK_ITEM_SCHEMA:$OURS"
+        gsettings set "$item" name "Toggle Upwork"
+        gsettings set "$item" command "$SHOW_CMD"
+        gsettings set "$item" binding "$SHORTCUT"
+        echo "GNOME shortcut registered: $SHORTCUT -> $SCRIPT_DIR/upwork-toggle.py"
+        echo "Note: GNOME handles these keys before Upwork sees them, so Upwork's own"
+        echo "show/hide hotkey is not needed (and never fires) if it uses the same keys."
+    fi
+fi

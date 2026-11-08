@@ -19,7 +19,8 @@ bus_owner() {
 # Upwork is single-instance: a second launch just quits and keeps the old
 # instance, which never got the X11 environment below. Warn, but still
 # launch so upwork:// links reach the running instance.
-if pgrep -x upwork > /dev/null 2>&1; then
+# (upwork-show.sh sets UPWORK_QUIET_RUNNING: relaunching is its whole point.)
+if [ -z "$UPWORK_QUIET_RUNNING" ] && pgrep -x upwork > /dev/null 2>&1; then
     warn "Upwork is already running; it keeps the environment it was started with."
     warn "Quit it completely (including the tray icon) and relaunch to get the bridge."
 fi
